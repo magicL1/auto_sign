@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   run:
@@ -47,4 +47,24 @@ jobs:
         run: npm test && npm run check
 
       - name: Run automation
+        id: automation
+        continue-on-error: true
         run: npm start
+
+      - name: Update failure log
+        if: always() && steps.automation.outcome == 'failure'
+        run: node scripts/record-failure.js
+
+      - name: Commit failure log
+        if: always() && steps.automation.outcome == 'failure'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add FAILURES.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore: record automation failure"
+          git push
+
+      - name: Mark workflow as failed
+        if: always() && steps.automation.outcome == 'failure'
+        run: exit 1
