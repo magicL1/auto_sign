@@ -1,0 +1,50 @@
+name: Juejin daily automation
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "正式执行账户操作（关闭时仅演练）"
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: juejin-daily-automation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JUEJIN_COOKIE: ${{ secrets.JUEJIN_COOKIE }}
+      EXECUTE: ${{ github.event_name == 'schedule' || inputs.execute == true }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run checks
+        run: npm test && npm run check
+
+      - name: Run automation
+        run: npm start
