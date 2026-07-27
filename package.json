@@ -6,13 +6,15 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/juejin.js && node --check src/cookies.js && node --check src/failure.js && node --check scripts/record-failure.js",
+    "setup-cookie": "playwright install chromium && node scripts/setup-cookie-secret.js",
+    "check": "node --check src/index.js && node --check src/juejin.js && node --check src/cookies.js && node --check src/cookie-secret.js && node --check src/github-secret.js && node --check src/failure.js && node --check scripts/record-failure.js && node --check scripts/setup-cookie-secret.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "libsodium-wrappers": "0.8.2",
     "playwright": "1.62.0"
   }
 }
