@@ -184,11 +184,18 @@ test("clicks the official sign-in button and verifies status", async () => {
   const logs = [];
   const page = {
     async goto() {},
-    getByRole() {
+    locator(selector) {
+      assert.equal(selector, "button");
       return {
-        async waitFor() {},
-        async count() { return 1; },
-        async click() { clicks += 1; },
+        filter({ hasText }) {
+          assert.equal(hasText, "立即签到");
+          return {
+            async waitFor() {},
+            async count() { return 1; },
+            async innerText() { return "立即签到"; },
+            async click() { clicks += 1; },
+          };
+        },
       };
     },
     request: {

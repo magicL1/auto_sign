@@ -170,19 +170,22 @@ export class JuejinAutomation {
       return true;
     }
 
-    if (!this.execute) {
-      this.logger.info("签到：演练模式，本应执行签到");
-      return false;
-    }
-
     await this.page.goto("https://juejin.cn/user/center/signin", {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
-    const button = this.page.getByRole("button", { name: "立即签到", exact: true });
+    const button = this.page.locator("button").filter({ hasText: "立即签到" });
     await button.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
     if ((await button.count()) !== 1) {
       throw new Error("找不到唯一的立即签到按钮");
+    }
+    if ((await button.innerText()).replace(/\s+/g, "") !== "立即签到") {
+      throw new Error("签到按钮文案无法确认");
+    }
+
+    if (!this.execute) {
+      this.logger.info("签到：演练模式，本应执行签到");
+      return false;
     }
     await button.click();
 
