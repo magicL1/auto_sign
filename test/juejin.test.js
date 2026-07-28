@@ -134,3 +134,87 @@ test("does not retry POST requests", async () => {
   );
   assert.equal(attempts, 1);
 });
+
+test("accepts an empty successful mutation response without retrying", async () => {
+  let attempts = 0;
+  const page = {
+    request: {
+      async fetch() {
+        attempts += 1;
+        return apiResponse("");
+      },
+    },
+  };
+  const automation = new JuejinAutomation(page);
+
+  const response = await automation.request("/growth_api/v1/check_in", {
+    method: "POST",
+    body: {},
+    allowEmptyResponse: true,
+  });
+
+  assert.equal(response, null);
+  assert.equal(attempts, 1);
+});
+
+test("verifies sign-in after an empty successful mutation response", async () => {
+  const responses = [
+    { err_no: 0, data: { check_in_done: false } },
+    "",
+    { err_no: 0, data: { check_in_done: true } },
+  ];
+  let requests = 0;
+  const logs = [];
+  const page = {
+    request: {
+      async fetch() {
+        requests += 1;
+        return apiResponse(responses.shift());
+      },
+    },
+  };
+  const automation = new JuejinAutomation(page, {
+    execute: true,
+    logger: { info(message) { logs.push(message); } },
+  });
+
+  await automation.ensureSignedIn();
+
+  assert.equal(requests, 3);
+  assert.deepEqual(logs, ["签到：成功"]);
+});
+
+test("verifies the free count decreased after an empty lottery response", async () => {
+  let currentUrl = "https://juejin.cn/user/center/signin";
+  const responses = [
+    { err_no: 0, data: { free_count: 1 } },
+    "",
+    { err_no: 0, data: { free_count: 0 } },
+  ];
+  let requests = 0;
+  const logs = [];
+  const page = {
+    async goto(url) {
+      currentUrl = url;
+    },
+    async waitForTimeout() {},
+    url() {
+      return currentUrl;
+    },
+    request: {
+      async fetch() {
+        requests += 1;
+        return apiResponse(responses.shift());
+      },
+    },
+  };
+  const automation = new JuejinAutomation(page, {
+    execute: true,
+    logger: { info(message) { logs.push(message); } },
+  });
+
+  await automation.drawFirstFreeLottery();
+
+  assert.equal(requests, 3);
+  assert.deepEqual(logs, ["抽奖：已使用一次免费机会"]);
+});

@@ -75,7 +75,7 @@ export class JuejinAutomation {
     this.retryDelayMs = retryDelayMs;
   }
 
-  async request(path, { method = "GET", body } = {}) {
+  async request(path, { method = "GET", body, allowEmptyResponse = false } = {}) {
     const url = new URL(path, API_ORIGIN);
     url.searchParams.set("aid", AID);
     const requestMethod = method.toUpperCase();
@@ -121,6 +121,10 @@ export class JuejinAutomation {
         return result.payload;
       }
 
+      if (result?.ok && allowEmptyResponse && result.responseLength === 0) {
+        return null;
+      }
+
       if (result && !result.ok) {
         lastError = new Error(`接口 ${url.pathname} 返回 HTTP ${result.status}`);
         const retryableStatus = result.status === 408 || result.status === 429 || result.status >= 500;
@@ -164,16 +168,20 @@ export class JuejinAutomation {
       return;
     }
 
-    unwrapApiPayload(
-      await this.request("/growth_api/v1/check_in", { method: "POST", body: {} }),
-      "签到",
-    );
+    const response = await this.request("/growth_api/v1/check_in", {
+      method: "POST",
+      body: {},
+      allowEmptyResponse: true,
+    });
+    if (response !== null) {
+      unwrapApiPayload(response, "签到");
+    }
     const verified = unwrapApiPayload(
       await this.request("/growth_api/v2/get_today_status"),
       "验证签到状态",
     );
     if (!verified?.check_in_done) {
-      throw new Error("签到接口返回成功，但状态仍为未签到");
+      throw new Error("签到请求后状态仍为未签到");
     }
     this.logger.info("签到：成功");
   }
@@ -202,10 +210,24 @@ export class JuejinAutomation {
       return;
     }
 
-    unwrapApiPayload(
-      await this.request("/growth_api/v1/lottery/draw", { method: "POST", body: {} }),
-      "首次免费抽奖",
+    const response = await this.request("/growth_api/v1/lottery/draw", {
+      method: "POST",
+      body: {},
+      allowEmptyResponse: true,
+    });
+    if (response !== null) {
+      unwrapApiPayload(response, "首次免费抽奖");
+    }
+
+    await this.page.waitForTimeout(1500);
+    const verifiedConfig = unwrapApiPayload(
+      await this.request("/growth_api/v1/lottery_config/get"),
+      "验证抽奖状态",
     );
+    const remainingFreeCount = Number(verifiedConfig?.free_count || 0);
+    if (remainingFreeCount >= freeCount) {
+      throw new Error("抽奖请求后免费次数未减少");
+    }
     this.logger.info("抽奖：已使用一次免费机会");
   }
 
@@ -231,18 +253,19 @@ export class JuejinAutomation {
   async setFollowed(userId, followed) {
     const action = followed ? "do" : "undo";
     const label = followed ? "重新关注" : "取消关注";
-    unwrapApiPayload(
-      await this.request(`/interact_api/v1/follow/${action}`, {
-        method: "POST",
-        body: { id: userId, type: USER_TYPE },
-      }),
-      label,
-    );
+    const response = await this.request(`/interact_api/v1/follow/${action}`, {
+      method: "POST",
+      body: { id: userId, type: USER_TYPE },
+      allowEmptyResponse: true,
+    });
+    if (response !== null) {
+      unwrapApiPayload(response, label);
+    }
 
     await delay(2500);
     const actual = await this.getFollowStatus(userId);
     if (actual !== followed) {
-      throw new Error(`${label}接口返回成功，但状态验证失败`);
+      throw new Error(`${label}请求后状态验证失败`);
     }
   }
 
