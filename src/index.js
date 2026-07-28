@@ -47,5 +47,6 @@ try {
   const failureFile = process.env.FAILURE_REASON_FILE || ".automation-failure";
   await writeFile(failureFile, `${reason}\n`, "utf8");
   console.error(`任务失败：${reason}`);
+  console.error(`失败详情：${String(error?.message || error)}`);
   process.exitCode = 1;
 }

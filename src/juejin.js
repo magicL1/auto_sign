@@ -93,7 +93,13 @@ export class JuejinAutomation {
         } catch {
           payload = null;
         }
-        return { ok: response.ok, status: response.status, payload };
+        return {
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get("content-type") || "unknown",
+          responseLength: text.length,
+          payload,
+        };
       },
       {
         requestUrl: url.toString(),
@@ -103,10 +109,12 @@ export class JuejinAutomation {
     );
 
     if (!result.ok) {
-      throw new Error(`请求 ${path} 失败：HTTP ${result.status}`);
+      throw new Error(`接口 ${url.pathname} 返回 HTTP ${result.status}`);
     }
     if (!result.payload) {
-      throw new Error(`请求 ${path} 失败：响应不是 JSON`);
+      throw new Error(
+        `接口 ${url.pathname} 返回空或非 JSON（HTTP ${result.status}，${result.contentType}，${result.responseLength} 字节）`,
+      );
     }
     return result.payload;
   }
@@ -148,6 +156,16 @@ export class JuejinAutomation {
   }
 
   async drawFirstFreeLottery() {
+    await this.page.goto("https://juejin.cn/mobile/lottery", {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await this.page.waitForTimeout(3000);
+
+    if (this.page.url().includes("verify")) {
+      throw new Error("进入抽奖页面时触发验证码或风控");
+    }
+
     const configPayload = await this.request("/growth_api/v1/lottery_config/get");
     const config = unwrapApiPayload(configPayload, "读取抽奖配置");
     const freeCount = Number(config?.free_count || 0);
