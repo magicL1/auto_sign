@@ -25,6 +25,7 @@ jobs:
     env:
       JUEJIN_COOKIE: ${{ secrets.JUEJIN_COOKIE }}
       EXECUTE: ${{ github.event_name == 'schedule' || inputs.execute == true }}
+      HEADED: true
 
     steps:
       - name: Checkout
@@ -69,7 +70,7 @@ jobs:
         id: automation
         if: steps.checks.outcome == 'success'
         continue-on-error: true
-        run: npm start
+        run: xvfb-run -a npm start
 
       - name: Update failure log
         if: >-

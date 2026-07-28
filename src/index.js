@@ -7,7 +7,7 @@ import { JuejinAutomation } from "./juejin.js";
 async function run() {
   const execute = process.env.EXECUTE === "true";
   const cookies = parseCookieHeader(process.env.JUEJIN_COOKIE);
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: process.env.HEADED !== "true" });
 
   try {
     const context = await browser.newContext({

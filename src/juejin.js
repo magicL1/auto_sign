@@ -177,7 +177,15 @@ export class JuejinAutomation {
     const button = this.page.locator("button").filter({ hasText: "立即签到" });
     await button.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
     if ((await button.count()) !== 1) {
-      throw new Error("找不到唯一的立即签到按钮");
+      const diagnostics = await this.page.evaluate(() => ({
+        path: window.location.pathname,
+        readyState: document.readyState,
+        buttonCount: document.querySelectorAll("button").length,
+        signInComponentCount: document.querySelectorAll('[class*="signin"]').length,
+      }));
+      throw new Error(
+        `找不到唯一的立即签到按钮（${diagnostics.path}，${diagnostics.readyState}，按钮${diagnostics.buttonCount}，签到组件${diagnostics.signInComponentCount}）`,
+      );
     }
     if ((await button.innerText()).replace(/\s+/g, "") !== "立即签到") {
       throw new Error("签到按钮文案无法确认");
