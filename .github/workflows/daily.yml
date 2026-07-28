@@ -2,7 +2,7 @@ name: Juejin daily automation
 
 on:
   schedule:
-    - cron: "55 7 * * *"
+    - cron: "10 1 * * *"
   workflow_dispatch:
     inputs:
       execute:
