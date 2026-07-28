@@ -4,6 +4,7 @@ import {
   extractFirstFollowee,
   JuejinAutomation,
   readFollowStatus,
+  readProfileFollowState,
   unwrapApiPayload,
 } from "../src/juejin.js";
 
@@ -33,6 +34,13 @@ test("reads mapped and descriptor follow states", () => {
   assert.equal(readFollowStatus({ "123": true }, "123"), true);
   assert.equal(readFollowStatus({ is_followed: 0 }, "123"), false);
   assert.equal(readFollowStatus([{ isfollowed: true }], "123"), true);
+});
+
+test("reads the visible profile follow state", () => {
+  assert.equal(readProfileFollowState("已关注"), true);
+  assert.equal(readProfileFollowState("取消关注"), true);
+  assert.equal(readProfileFollowState("关注"), false);
+  assert.equal(readProfileFollowState("未知"), null);
 });
 
 test("throws when the API reports an error", () => {
@@ -66,9 +74,9 @@ test("opens the lottery page before reading its free configuration", async () =>
 
   await automation.drawFirstFreeLottery();
 
-  assert.equal(currentUrl, "https://juejin.cn/mobile/lottery");
+  assert.equal(currentUrl, "https://juejin.cn/user/center/lottery");
   assert.equal(requestOptions.headers.origin, "https://juejin.cn");
-  assert.equal(requestOptions.headers.referer, "https://juejin.cn/mobile/lottery");
+  assert.equal(requestOptions.headers.referer, "https://juejin.cn/user/center/lottery");
 });
 
 test("reports empty responses without exposing query values", async () => {
@@ -157,15 +165,23 @@ test("accepts an empty successful mutation response without retrying", async () 
   assert.equal(attempts, 1);
 });
 
-test("verifies sign-in after an empty successful mutation response", async () => {
+test("clicks the official sign-in button and verifies status", async () => {
   const responses = [
     { err_no: 0, data: { check_in_done: false } },
-    "",
     { err_no: 0, data: { check_in_done: true } },
   ];
   let requests = 0;
+  let clicks = 0;
   const logs = [];
   const page = {
+    async goto() {},
+    getByRole() {
+      return {
+        async waitFor() {},
+        async count() { return 1; },
+        async click() { clicks += 1; },
+      };
+    },
     request: {
       async fetch() {
         requests += 1;
@@ -180,18 +196,19 @@ test("verifies sign-in after an empty successful mutation response", async () =>
 
   await automation.ensureSignedIn();
 
-  assert.equal(requests, 3);
+  assert.equal(requests, 2);
+  assert.equal(clicks, 1);
   assert.deepEqual(logs, ["签到：成功"]);
 });
 
-test("verifies the free count decreased after an empty lottery response", async () => {
+test("clicks only an explicitly free lottery button and verifies free count", async () => {
   let currentUrl = "https://juejin.cn/user/center/signin";
   const responses = [
     { err_no: 0, data: { free_count: 1 } },
-    "",
     { err_no: 0, data: { free_count: 0 } },
   ];
   let requests = 0;
+  let clicks = 0;
   const logs = [];
   const page = {
     async goto(url) {
@@ -200,6 +217,19 @@ test("verifies the free count decreased after an empty lottery response", async 
     async waitForTimeout() {},
     url() {
       return currentUrl;
+    },
+    locator(selector) {
+      assert.equal(selector, "div.turntable-item.lottery");
+      return {
+        filter({ hasText }) {
+          assert.equal(hasText, "免费");
+          return {
+            async count() { return 1; },
+            async innerText() { return "单抽 免费"; },
+            async click() { clicks += 1; },
+          };
+        },
+      };
     },
     request: {
       async fetch() {
@@ -215,6 +245,7 @@ test("verifies the free count decreased after an empty lottery response", async 
 
   await automation.drawFirstFreeLottery();
 
-  assert.equal(requests, 3);
+  assert.equal(requests, 2);
+  assert.equal(clicks, 1);
   assert.deepEqual(logs, ["抽奖：已使用一次免费机会"]);
 });

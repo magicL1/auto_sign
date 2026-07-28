@@ -67,6 +67,13 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+export function readProfileFollowState(text) {
+  const normalized = String(text || "").replace(/\s+/g, "").trim();
+  if (normalized.includes("已关注") || normalized.includes("取消关注")) return true;
+  if (normalized === "关注") return false;
+  return null;
+}
+
 export class JuejinAutomation {
   constructor(page, { execute = false, logger = console, retryDelayMs = 1000 } = {}) {
     this.page = page;
@@ -168,26 +175,33 @@ export class JuejinAutomation {
       return;
     }
 
-    const response = await this.request("/growth_api/v1/check_in", {
-      method: "POST",
-      body: {},
-      allowEmptyResponse: true,
+    await this.page.goto("https://juejin.cn/user/center/signin", {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
     });
-    if (response !== null) {
-      unwrapApiPayload(response, "签到");
+    const button = this.page.getByRole("button", { name: "立即签到", exact: true });
+    await button.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
+    if ((await button.count()) !== 1) {
+      throw new Error("找不到唯一的立即签到按钮");
     }
-    const verified = unwrapApiPayload(
-      await this.request("/growth_api/v2/get_today_status"),
-      "验证签到状态",
-    );
-    if (!verified?.check_in_done) {
-      throw new Error("签到请求后状态仍为未签到");
+    await button.click();
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await delay(1000);
+      const verified = unwrapApiPayload(
+        await this.request("/growth_api/v2/get_today_status"),
+        "验证签到状态",
+      );
+      if (verified?.check_in_done) {
+        this.logger.info("签到：成功");
+        return;
+      }
     }
-    this.logger.info("签到：成功");
+    throw new Error("点击签到后状态仍为未签到");
   }
 
   async drawFirstFreeLottery() {
-    await this.page.goto("https://juejin.cn/mobile/lottery", {
+    await this.page.goto("https://juejin.cn/user/center/lottery", {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
@@ -210,25 +224,31 @@ export class JuejinAutomation {
       return;
     }
 
-    const response = await this.request("/growth_api/v1/lottery/draw", {
-      method: "POST",
-      body: {},
-      allowEmptyResponse: true,
-    });
-    if (response !== null) {
-      unwrapApiPayload(response, "首次免费抽奖");
+    const freeButton = this.page
+      .locator("div.turntable-item.lottery")
+      .filter({ hasText: "免费" });
+    if ((await freeButton.count()) !== 1) {
+      throw new Error("找不到唯一且明确免费的抽奖按钮");
     }
+    const buttonText = (await freeButton.innerText()).replace(/\s+/g, "");
+    if (!buttonText.includes("免费") || buttonText.includes("200")) {
+      throw new Error("抽奖按钮无法确认免费");
+    }
+    await freeButton.click();
 
-    await this.page.waitForTimeout(1500);
-    const verifiedConfig = unwrapApiPayload(
-      await this.request("/growth_api/v1/lottery_config/get"),
-      "验证抽奖状态",
-    );
-    const remainingFreeCount = Number(verifiedConfig?.free_count || 0);
-    if (remainingFreeCount >= freeCount) {
-      throw new Error("抽奖请求后免费次数未减少");
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await delay(1000);
+      const verifiedConfig = unwrapApiPayload(
+        await this.request("/growth_api/v1/lottery_config/get"),
+        "验证抽奖状态",
+      );
+      const remainingFreeCount = Number(verifiedConfig?.free_count || 0);
+      if (remainingFreeCount < freeCount) {
+        this.logger.info("抽奖：已使用一次免费机会");
+        return;
+      }
     }
-    this.logger.info("抽奖：已使用一次免费机会");
+    throw new Error("点击抽奖后免费次数未减少");
   }
 
   async getFirstFollowee(userId) {
@@ -250,41 +270,101 @@ export class JuejinAutomation {
     return followed;
   }
 
-  async setFollowed(userId, followed) {
-    const action = followed ? "do" : "undo";
+  async readProfileFollowState() {
+    const control = this.page.locator(".animation-follow-btn");
+    await control.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
+    if ((await control.count()) !== 1) {
+      throw new Error("找不到唯一的主页关注按钮");
+    }
+    const visibleState = control.locator(".follow-ctx.show");
+    if ((await visibleState.count()) !== 1) {
+      throw new Error("无法识别主页关注按钮状态");
+    }
+    const followed = readProfileFollowState(await visibleState.innerText());
+    if (followed === null) {
+      throw new Error("主页返回了未知的关注状态");
+    }
+    return { control, followed };
+  }
+
+  async setFollowedOnProfile(userId, followed) {
     const label = followed ? "重新关注" : "取消关注";
-    const response = await this.request(`/interact_api/v1/follow/${action}`, {
-      method: "POST",
-      body: { id: userId, type: USER_TYPE },
-      allowEmptyResponse: true,
-    });
-    if (response !== null) {
-      unwrapApiPayload(response, label);
+    if (!this.page.url().includes(`/user/${userId}`)) {
+      throw new Error("关注操作页面与锁定用户不一致");
     }
 
-    await delay(2500);
-    const actual = await this.getFollowStatus(userId);
-    if (actual !== followed) {
-      throw new Error(`${label}请求后状态验证失败`);
+    const current = await this.readProfileFollowState();
+    if (current.followed === followed) return;
+    await current.control.click();
+
+    if (!followed) {
+      await delay(300);
+      const confirm = this.page.locator(
+        ".byte-modal__wrapper:visible button.btn-confirm:visible",
+      );
+      const confirmCount = await confirm.count();
+      if (confirmCount > 1) {
+        throw new Error("取消关注确认按钮不唯一");
+      }
+      if (confirmCount === 1) {
+        await confirm.click();
+      }
     }
+
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      await delay(500);
+      const actual = await this.readProfileFollowState();
+      if (actual.followed === followed) return;
+    }
+    throw new Error(`${label}后页面状态验证失败`);
   }
 
   async refreshFirstFolloweeTwice(currentUserId) {
-    const targetUserId = await this.getFirstFollowee(currentUserId);
+    await this.page.goto(`https://juejin.cn/user/${currentUserId}/following`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await this.page.waitForTimeout(2000);
+
+    const users = this.page.locator("ul.tag-list > li.item");
+    await users.nth(0).waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
+    const userCount = await users.count();
+    if (userCount < 1) {
+      throw new Error("关注列表为空，无法执行关注刷新");
+    }
+    const firstUser = users.nth(0);
+    const userLink = firstUser.locator('a.username[href^="/user/"]');
+    if ((await userLink.count()) !== 1) {
+      throw new Error("无法锁定关注列表第一位用户");
+    }
+    const href = await userLink.getAttribute("href");
+    const targetUserId = href?.match(/^\/user\/(\d+)(?:\/|$)/)?.[1];
+    if (!targetUserId) {
+      throw new Error("无法识别关注列表第一位用户的 ID");
+    }
 
     if (!this.execute) {
       this.logger.info("关注：演练模式，本应对列表第一位用户执行两轮取消关注和重新关注");
       return;
     }
 
-    for (let cycle = 1; cycle <= 2; cycle += 1) {
-      await this.setFollowed(targetUserId, false);
-      await this.setFollowed(targetUserId, true);
-      this.logger.info(`关注：第 ${cycle}/2 轮完成`);
-      await delay(2500);
+    await this.page.goto(`https://juejin.cn/user/${targetUserId}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await this.page.waitForTimeout(1500);
+    if (!(await this.readProfileFollowState()).followed) {
+      throw new Error("关注列表第一位用户当前并非已关注状态");
     }
 
-    if (!(await this.getFollowStatus(targetUserId))) {
+    for (let cycle = 1; cycle <= 2; cycle += 1) {
+      await this.setFollowedOnProfile(targetUserId, false);
+      await this.setFollowedOnProfile(targetUserId, true);
+      this.logger.info(`关注：第 ${cycle}/2 轮完成`);
+      await delay(1000);
+    }
+
+    if (!(await this.readProfileFollowState()).followed) {
       throw new Error("两轮操作完成后，目标用户未保持关注状态");
     }
     this.logger.info("关注：两轮完成，最终状态为已关注");
