@@ -7,6 +7,24 @@ import {
   unwrapApiPayload,
 } from "../src/juejin.js";
 
+function apiResponse(payload, { status = 200, contentType = "application/json" } = {}) {
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload);
+  return {
+    ok() {
+      return status >= 200 && status < 300;
+    },
+    status() {
+      return status;
+    },
+    headers() {
+      return { "content-type": contentType };
+    },
+    async text() {
+      return text;
+    },
+  };
+}
+
 test("extracts the first followee from the current API shape", () => {
   assert.equal(extractFirstFollowee({ data: [{ user_id: "123" }, { user_id: "456" }] }), "123");
 });
@@ -26,6 +44,7 @@ test("throws when the API reports an error", () => {
 
 test("opens the lottery page before reading its free configuration", async () => {
   let currentUrl = "https://juejin.cn/user/center/signin";
+  let requestOptions;
   const page = {
     async goto(url) {
       currentUrl = url;
@@ -34,14 +53,11 @@ test("opens the lottery page before reading its free configuration", async () =>
     url() {
       return currentUrl;
     },
-    async evaluate() {
-      return {
-        ok: true,
-        status: 200,
-        contentType: "application/json",
-        responseLength: 37,
-        payload: { err_no: 0, data: { free_count: 0 } },
-      };
+    request: {
+      async fetch(_url, options) {
+        requestOptions = options;
+        return apiResponse({ err_no: 0, data: { free_count: 0 } });
+      },
     },
   };
   const automation = new JuejinAutomation(page, {
@@ -51,18 +67,16 @@ test("opens the lottery page before reading its free configuration", async () =>
   await automation.drawFirstFreeLottery();
 
   assert.equal(currentUrl, "https://juejin.cn/mobile/lottery");
+  assert.equal(requestOptions.headers.origin, "https://juejin.cn");
+  assert.equal(requestOptions.headers.referer, "https://juejin.cn/mobile/lottery");
 });
 
 test("reports empty responses without exposing query values", async () => {
   const page = {
-    async evaluate() {
-      return {
-        ok: true,
-        status: 200,
-        contentType: "application/json",
-        responseLength: 0,
-        payload: null,
-      };
+    request: {
+      async fetch() {
+        return apiResponse("");
+      },
     },
   };
   const automation = new JuejinAutomation(page, {
@@ -81,16 +95,12 @@ test("reports empty responses without exposing query values", async () => {
 test("retries transient GET failures up to three attempts", async () => {
   let attempts = 0;
   const page = {
-    async evaluate() {
-      attempts += 1;
-      if (attempts < 3) throw new TypeError("Failed to fetch");
-      return {
-        ok: true,
-        status: 200,
-        contentType: "application/json",
-        responseLength: 24,
-        payload: { err_no: 0, data: {} },
-      };
+    request: {
+      async fetch() {
+        attempts += 1;
+        if (attempts < 3) throw new TypeError("Failed to fetch");
+        return apiResponse({ err_no: 0, data: {} });
+      },
     },
   };
   const automation = new JuejinAutomation(page, {
@@ -106,9 +116,11 @@ test("retries transient GET failures up to three attempts", async () => {
 test("does not retry POST requests", async () => {
   let attempts = 0;
   const page = {
-    async evaluate() {
-      attempts += 1;
-      throw new TypeError("Failed to fetch");
+    request: {
+      async fetch() {
+        attempts += 1;
+        throw new TypeError("Failed to fetch");
+      },
     },
   };
   const automation = new JuejinAutomation(page, {

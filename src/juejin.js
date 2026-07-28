@@ -85,36 +85,32 @@ export class JuejinAutomation {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       let result;
       try {
-        result = await this.page.evaluate(
-          async ({ requestUrl, requestMethod: evaluatedMethod, requestBody }) => {
-            const response = await fetch(requestUrl, {
-              method: evaluatedMethod,
-              credentials: "include",
-              headers:
-                requestBody === undefined ? undefined : { "content-type": "application/json" },
-              body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
-            });
-            const text = await response.text();
-            let payload;
-            try {
-              payload = JSON.parse(text);
-            } catch {
-              payload = null;
-            }
-            return {
-              ok: response.ok,
-              status: response.status,
-              contentType: response.headers.get("content-type") || "unknown",
-              responseLength: text.length,
-              payload,
-            };
-          },
-          {
-            requestUrl: url.toString(),
-            requestMethod,
-            requestBody: body,
-          },
-        );
+        const headers = {
+          accept: "application/json, text/plain, */*",
+          origin: "https://juejin.cn",
+          referer: this.page.url?.() || "https://juejin.cn/",
+        };
+        const options = { method: requestMethod, headers };
+        if (body !== undefined) {
+          headers["content-type"] = "application/json";
+          options.data = body;
+        }
+
+        const response = await this.page.request.fetch(url.toString(), options);
+        const text = await response.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = null;
+        }
+        result = {
+          ok: response.ok(),
+          status: response.status(),
+          contentType: response.headers()["content-type"] || "unknown",
+          responseLength: text.length,
+          payload,
+        };
       } catch (error) {
         lastError = new Error(
           `接口 ${url.pathname} 网络请求失败：${String(error?.message || error)}`,
