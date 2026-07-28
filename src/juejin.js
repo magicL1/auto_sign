@@ -69,7 +69,15 @@ function delay(milliseconds) {
 
 export function readProfileFollowState(text) {
   const normalized = String(text || "").replace(/\s+/g, "").trim();
-  if (normalized.includes("已关注") || normalized.includes("取消关注")) return true;
+  if (
+    normalized.includes("已关注") ||
+    normalized.includes("取消关注") ||
+    normalized.includes("互相关注") ||
+    normalized.includes("相互关注") ||
+    normalized.includes("互关")
+  ) {
+    return true;
+  }
   if (normalized === "关注") return false;
   return null;
 }
@@ -293,7 +301,7 @@ export class JuejinAutomation {
     return followed;
   }
 
-  async readProfileFollowState() {
+  async readProfileFollowState(userId) {
     const control = this.page.locator(".animation-follow-btn");
     await control.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
     if ((await control.count()) !== 1) {
@@ -304,6 +312,9 @@ export class JuejinAutomation {
       throw new Error("无法识别主页关注按钮状态");
     }
     const followed = readProfileFollowState(await visibleState.innerText());
+    if (followed === null && userId) {
+      return { control, followed: await this.getFollowStatus(userId) };
+    }
     if (followed === null) {
       throw new Error("主页返回了未知的关注状态");
     }
@@ -316,7 +327,7 @@ export class JuejinAutomation {
       throw new Error("关注操作页面与锁定用户不一致");
     }
 
-    const current = await this.readProfileFollowState();
+    const current = await this.readProfileFollowState(userId);
     if (current.followed === followed) return;
     await current.control.click();
 
@@ -336,7 +347,7 @@ export class JuejinAutomation {
 
     for (let attempt = 1; attempt <= 8; attempt += 1) {
       await delay(500);
-      const actual = await this.readProfileFollowState();
+      const actual = await this.readProfileFollowState(userId);
       if (actual.followed === followed) return;
     }
     throw new Error(`${label}后页面状态验证失败`);
@@ -366,18 +377,18 @@ export class JuejinAutomation {
       throw new Error("无法识别关注列表第一位用户的 ID");
     }
 
-    if (!this.execute) {
-      this.logger.info("关注：演练模式，本应对列表第一位用户执行两轮取消关注和重新关注");
-      return;
-    }
-
     await this.page.goto(`https://juejin.cn/user/${targetUserId}`, {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
     await this.page.waitForTimeout(1500);
-    if (!(await this.readProfileFollowState()).followed) {
+    if (!(await this.readProfileFollowState(targetUserId)).followed) {
       throw new Error("关注列表第一位用户当前并非已关注状态");
+    }
+
+    if (!this.execute) {
+      this.logger.info("关注：演练模式，本应对列表第一位用户执行两轮取消关注和重新关注");
+      return;
     }
 
     for (let cycle = 1; cycle <= 2; cycle += 1) {
@@ -387,7 +398,7 @@ export class JuejinAutomation {
       await delay(1000);
     }
 
-    if (!(await this.readProfileFollowState()).followed) {
+    if (!(await this.readProfileFollowState(targetUserId)).followed) {
       throw new Error("两轮操作完成后，目标用户未保持关注状态");
     }
     this.logger.info("关注：两轮完成，最终状态为已关注");

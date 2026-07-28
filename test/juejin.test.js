@@ -39,6 +39,8 @@ test("reads mapped and descriptor follow states", () => {
 test("reads the visible profile follow state", () => {
   assert.equal(readProfileFollowState("已关注"), true);
   assert.equal(readProfileFollowState("取消关注"), true);
+  assert.equal(readProfileFollowState("互相关注"), true);
+  assert.equal(readProfileFollowState("相互关注"), true);
   assert.equal(readProfileFollowState("关注"), false);
   assert.equal(readProfileFollowState("未知"), null);
 });
