@@ -68,55 +68,82 @@ function delay(milliseconds) {
 }
 
 export class JuejinAutomation {
-  constructor(page, { execute = false, logger = console } = {}) {
+  constructor(page, { execute = false, logger = console, retryDelayMs = 1000 } = {}) {
     this.page = page;
     this.execute = execute;
     this.logger = logger;
+    this.retryDelayMs = retryDelayMs;
   }
 
   async request(path, { method = "GET", body } = {}) {
     const url = new URL(path, API_ORIGIN);
     url.searchParams.set("aid", AID);
+    const requestMethod = method.toUpperCase();
+    const maxAttempts = requestMethod === "GET" ? 3 : 1;
+    let lastError;
 
-    const result = await this.page.evaluate(
-      async ({ requestUrl, requestMethod, requestBody }) => {
-        const response = await fetch(requestUrl, {
-          method: requestMethod,
-          credentials: "include",
-          headers: requestBody === undefined ? undefined : { "content-type": "application/json" },
-          body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
-        });
-        const text = await response.text();
-        let payload;
-        try {
-          payload = JSON.parse(text);
-        } catch {
-          payload = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let result;
+      try {
+        result = await this.page.evaluate(
+          async ({ requestUrl, requestMethod: evaluatedMethod, requestBody }) => {
+            const response = await fetch(requestUrl, {
+              method: evaluatedMethod,
+              credentials: "include",
+              headers:
+                requestBody === undefined ? undefined : { "content-type": "application/json" },
+              body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
+            });
+            const text = await response.text();
+            let payload;
+            try {
+              payload = JSON.parse(text);
+            } catch {
+              payload = null;
+            }
+            return {
+              ok: response.ok,
+              status: response.status,
+              contentType: response.headers.get("content-type") || "unknown",
+              responseLength: text.length,
+              payload,
+            };
+          },
+          {
+            requestUrl: url.toString(),
+            requestMethod,
+            requestBody: body,
+          },
+        );
+      } catch (error) {
+        lastError = new Error(
+          `接口 ${url.pathname} 网络请求失败：${String(error?.message || error)}`,
+        );
+      }
+
+      if (result?.ok && result.payload) {
+        return result.payload;
+      }
+
+      if (result && !result.ok) {
+        lastError = new Error(`接口 ${url.pathname} 返回 HTTP ${result.status}`);
+        const retryableStatus = result.status === 408 || result.status === 429 || result.status >= 500;
+        if (!retryableStatus) {
+          throw lastError;
         }
-        return {
-          ok: response.ok,
-          status: response.status,
-          contentType: response.headers.get("content-type") || "unknown",
-          responseLength: text.length,
-          payload,
-        };
-      },
-      {
-        requestUrl: url.toString(),
-        requestMethod: method,
-        requestBody: body,
-      },
-    );
+      } else if (result) {
+        lastError = new Error(
+          `接口 ${url.pathname} 返回空或非 JSON（HTTP ${result.status}，${result.contentType}，${result.responseLength} 字节）`,
+        );
+      }
 
-    if (!result.ok) {
-      throw new Error(`接口 ${url.pathname} 返回 HTTP ${result.status}`);
+      if (attempt < maxAttempts) {
+        this.logger.warn?.(`接口 ${url.pathname} 第 ${attempt} 次读取失败，准备重试`);
+        await delay(attempt * this.retryDelayMs);
+      }
     }
-    if (!result.payload) {
-      throw new Error(
-        `接口 ${url.pathname} 返回空或非 JSON（HTTP ${result.status}，${result.contentType}，${result.responseLength} 字节）`,
-      );
-    }
-    return result.payload;
+
+    throw lastError || new Error(`接口 ${url.pathname} 请求失败`);
   }
 
   async getCurrentUser() {

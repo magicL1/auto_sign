@@ -65,7 +65,10 @@ test("reports empty responses without exposing query values", async () => {
       };
     },
   };
-  const automation = new JuejinAutomation(page);
+  const automation = new JuejinAutomation(page, {
+    logger: { warn() {} },
+    retryDelayMs: 0,
+  });
 
   await assert.rejects(
     automation.request("/user_api/v1/follow/isfollowed?ids=sensitive-user-id"),
@@ -73,4 +76,49 @@ test("reports empty responses without exposing query values", async () => {
       error.message.includes("/user_api/v1/follow/isfollowed") &&
       !error.message.includes("sensitive-user-id"),
   );
+});
+
+test("retries transient GET failures up to three attempts", async () => {
+  let attempts = 0;
+  const page = {
+    async evaluate() {
+      attempts += 1;
+      if (attempts < 3) throw new TypeError("Failed to fetch");
+      return {
+        ok: true,
+        status: 200,
+        contentType: "application/json",
+        responseLength: 24,
+        payload: { err_no: 0, data: {} },
+      };
+    },
+  };
+  const automation = new JuejinAutomation(page, {
+    logger: { warn() {} },
+    retryDelayMs: 0,
+  });
+
+  await automation.request("/growth_api/v2/get_today_status");
+
+  assert.equal(attempts, 3);
+});
+
+test("does not retry POST requests", async () => {
+  let attempts = 0;
+  const page = {
+    async evaluate() {
+      attempts += 1;
+      throw new TypeError("Failed to fetch");
+    },
+  };
+  const automation = new JuejinAutomation(page, {
+    logger: { warn() {} },
+    retryDelayMs: 0,
+  });
+
+  await assert.rejects(
+    automation.request("/growth_api/v1/check_in", { method: "POST", body: {} }),
+    /网络请求失败/,
+  );
+  assert.equal(attempts, 1);
 });
