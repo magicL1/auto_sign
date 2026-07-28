@@ -332,10 +332,10 @@ export class JuejinAutomation {
     await current.control.click();
 
     if (!followed) {
-      await delay(300);
       const confirm = this.page.locator(
         ".byte-modal__wrapper:visible button.btn-confirm:visible",
       );
+      await confirm.waitFor({ state: "visible", timeout: 2000 }).catch(() => {});
       const confirmCount = await confirm.count();
       if (confirmCount > 1) {
         throw new Error("取消关注确认按钮不唯一");
@@ -345,8 +345,8 @@ export class JuejinAutomation {
       }
     }
 
-    for (let attempt = 1; attempt <= 8; attempt += 1) {
-      await delay(500);
+    for (let attempt = 1; attempt <= 20; attempt += 1) {
+      await delay(1000);
       const actual = await this.readProfileFollowState(userId);
       if (actual.followed === followed) return;
     }
@@ -395,7 +395,10 @@ export class JuejinAutomation {
       await this.setFollowedOnProfile(targetUserId, false);
       await this.setFollowedOnProfile(targetUserId, true);
       this.logger.info(`关注：第 ${cycle}/2 轮完成`);
-      await delay(1000);
+      if (cycle < 2) {
+        this.logger.info("关注：等待 10 秒后执行第二轮");
+        await delay(10_000);
+      }
     }
 
     if (!(await this.readProfileFollowState(targetUserId)).followed) {
