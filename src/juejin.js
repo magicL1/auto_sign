@@ -167,12 +167,12 @@ export class JuejinAutomation {
     const status = unwrapApiPayload(statusPayload, "检查签到状态");
     if (status?.check_in_done) {
       this.logger.info("签到：今天已经完成");
-      return;
+      return true;
     }
 
     if (!this.execute) {
       this.logger.info("签到：演练模式，本应执行签到");
-      return;
+      return false;
     }
 
     await this.page.goto("https://juejin.cn/user/center/signin", {
@@ -194,13 +194,13 @@ export class JuejinAutomation {
       );
       if (verified?.check_in_done) {
         this.logger.info("签到：成功");
-        return;
+        return true;
       }
     }
     throw new Error("点击签到后状态仍为未签到");
   }
 
-  async drawFirstFreeLottery() {
+  async drawFirstFreeLottery(signedInToday = true) {
     await this.page.goto("https://juejin.cn/user/center/lottery", {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
@@ -211,44 +211,56 @@ export class JuejinAutomation {
       throw new Error("进入抽奖页面时触发验证码或风控");
     }
 
-    const configPayload = await this.request("/growth_api/v1/lottery_config/get");
-    const config = unwrapApiPayload(configPayload, "读取抽奖配置");
-    const freeCount = Number(config?.free_count || 0);
-    if (freeCount <= 0) {
+    const freeButton = this.page
+      .locator("div.turntable-item.lottery")
+      .filter({ hasText: "免费" });
+    const freeButtonCount = await freeButton.count();
+    if (freeButtonCount > 1) {
+      throw new Error("找不到唯一且明确免费的抽奖按钮");
+    }
+    if (freeButtonCount === 0) {
+      const signPrompt = this.page.locator(".tosignin").filter({ hasText: "去签到" });
+      if ((await signPrompt.count()) === 1) {
+        if (!signedInToday && !this.execute) {
+          this.logger.info("抽奖：演练模式，签到后本应检查免费机会");
+          return;
+        }
+        throw new Error("抽奖页面仍提示需要先签到");
+      }
+
+      const paidSingleButton = this.page
+        .locator("div.turntable-item.lottery")
+        .filter({ hasText: "单抽" });
+      if ((await paidSingleButton.count()) !== 1) {
+        throw new Error("无法确认当天免费抽奖是否已完成");
+      }
+      const paidText = (await paidSingleButton.innerText()).replace(/\s+/g, "");
+      if (!paidText.includes("200")) {
+        throw new Error("无法确认当天免费抽奖是否已完成");
+      }
       this.logger.info("抽奖：今天没有剩余免费次数，跳过");
       return;
+    }
+
+    const buttonText = (await freeButton.innerText()).replace(/\s+/g, "");
+    if (!buttonText.includes("免费") || buttonText.includes("200")) {
+      throw new Error("抽奖按钮无法确认免费");
     }
 
     if (!this.execute) {
       this.logger.info("抽奖：演练模式，本应使用一次免费机会");
       return;
     }
-
-    const freeButton = this.page
-      .locator("div.turntable-item.lottery")
-      .filter({ hasText: "免费" });
-    if ((await freeButton.count()) !== 1) {
-      throw new Error("找不到唯一且明确免费的抽奖按钮");
-    }
-    const buttonText = (await freeButton.innerText()).replace(/\s+/g, "");
-    if (!buttonText.includes("免费") || buttonText.includes("200")) {
-      throw new Error("抽奖按钮无法确认免费");
-    }
     await freeButton.click();
 
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       await delay(1000);
-      const verifiedConfig = unwrapApiPayload(
-        await this.request("/growth_api/v1/lottery_config/get"),
-        "验证抽奖状态",
-      );
-      const remainingFreeCount = Number(verifiedConfig?.free_count || 0);
-      if (remainingFreeCount < freeCount) {
+      if ((await freeButton.count()) === 0) {
         this.logger.info("抽奖：已使用一次免费机会");
         return;
       }
     }
-    throw new Error("点击抽奖后免费次数未减少");
+    throw new Error("点击抽奖后免费按钮仍然存在");
   }
 
   async getFirstFollowee(userId) {
@@ -373,8 +385,8 @@ export class JuejinAutomation {
   async run() {
     const user = await this.getCurrentUser();
     this.logger.info(this.execute ? "运行模式：正式执行" : "运行模式：只读演练");
-    await this.ensureSignedIn();
-    await this.drawFirstFreeLottery();
+    const signedInToday = await this.ensureSignedIn();
+    await this.drawFirstFreeLottery(signedInToday);
     await this.refreshFirstFolloweeTwice(String(user.user_id));
   }
 }

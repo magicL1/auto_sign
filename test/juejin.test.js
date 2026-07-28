@@ -50,9 +50,8 @@ test("throws when the API reports an error", () => {
   );
 });
 
-test("opens the lottery page before reading its free configuration", async () => {
+test("opens the official lottery page and skips a confirmed paid draw", async () => {
   let currentUrl = "https://juejin.cn/user/center/signin";
-  let requestOptions;
   const page = {
     async goto(url) {
       currentUrl = url;
@@ -61,10 +60,22 @@ test("opens the lottery page before reading its free configuration", async () =>
     url() {
       return currentUrl;
     },
+    locator(selector) {
+      return {
+        filter({ hasText }) {
+          return {
+            async count() {
+              if (selector === "div.turntable-item.lottery" && hasText === "单抽") return 1;
+              return 0;
+            },
+            async innerText() { return "单抽 200"; },
+          };
+        },
+      };
+    },
     request: {
-      async fetch(_url, options) {
-        requestOptions = options;
-        return apiResponse({ err_no: 0, data: { free_count: 0 } });
+      async fetch() {
+        throw new Error("lottery should not call an API");
       },
     },
   };
@@ -75,8 +86,6 @@ test("opens the lottery page before reading its free configuration", async () =>
   await automation.drawFirstFreeLottery();
 
   assert.equal(currentUrl, "https://juejin.cn/user/center/lottery");
-  assert.equal(requestOptions.headers.origin, "https://juejin.cn");
-  assert.equal(requestOptions.headers.referer, "https://juejin.cn/user/center/lottery");
 });
 
 test("reports empty responses without exposing query values", async () => {
@@ -201,14 +210,10 @@ test("clicks the official sign-in button and verifies status", async () => {
   assert.deepEqual(logs, ["签到：成功"]);
 });
 
-test("clicks only an explicitly free lottery button and verifies free count", async () => {
+test("clicks only an explicitly free lottery button and verifies it disappears", async () => {
   let currentUrl = "https://juejin.cn/user/center/signin";
-  const responses = [
-    { err_no: 0, data: { free_count: 1 } },
-    { err_no: 0, data: { free_count: 0 } },
-  ];
-  let requests = 0;
   let clicks = 0;
+  let freeButtonVisible = true;
   const logs = [];
   const page = {
     async goto(url) {
@@ -224,17 +229,19 @@ test("clicks only an explicitly free lottery button and verifies free count", as
         filter({ hasText }) {
           assert.equal(hasText, "免费");
           return {
-            async count() { return 1; },
+            async count() { return freeButtonVisible ? 1 : 0; },
             async innerText() { return "单抽 免费"; },
-            async click() { clicks += 1; },
+            async click() {
+              clicks += 1;
+              freeButtonVisible = false;
+            },
           };
         },
       };
     },
     request: {
       async fetch() {
-        requests += 1;
-        return apiResponse(responses.shift());
+        throw new Error("lottery should not call an API");
       },
     },
   };
@@ -245,7 +252,6 @@ test("clicks only an explicitly free lottery button and verifies free count", as
 
   await automation.drawFirstFreeLottery();
 
-  assert.equal(requests, 2);
   assert.equal(clicks, 1);
   assert.deepEqual(logs, ["抽奖：已使用一次免费机会"]);
 });
