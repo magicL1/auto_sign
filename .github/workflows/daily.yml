@@ -2,7 +2,7 @@ name: Juejin daily automation
 
 on:
   schedule:
-    - cron: "5 6 * * *"
+    - cron: "35 6 * * *"
   workflow_dispatch:
     inputs:
       execute:
@@ -37,25 +37,58 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        id: dependencies
+        continue-on-error: true
+        run: |
+          if ! npm ci; then
+            echo "依赖安装失败" > .automation-failure
+            exit 1
+          fi
 
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        id: chromium
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if ! npx playwright install --with-deps chromium; then
+            echo "浏览器安装失败" > .automation-failure
+            exit 1
+          fi
 
       - name: Run checks
-        run: npm test && npm run check
+        id: checks
+        if: steps.chromium.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if ! (npm test && npm run check); then
+            echo "代码检查失败" > .automation-failure
+            exit 1
+          fi
 
       - name: Run automation
         id: automation
+        if: steps.checks.outcome == 'success'
         continue-on-error: true
         run: npm start
 
       - name: Update failure log
-        if: always() && steps.automation.outcome == 'failure'
+        if: >-
+          always() && (
+            steps.dependencies.outcome == 'failure' ||
+            steps.chromium.outcome == 'failure' ||
+            steps.checks.outcome == 'failure' ||
+            steps.automation.outcome == 'failure'
+          )
         run: node scripts/record-failure.js
 
       - name: Commit failure log
-        if: always() && steps.automation.outcome == 'failure'
+        if: >-
+          always() && (
+            steps.dependencies.outcome == 'failure' ||
+            steps.chromium.outcome == 'failure' ||
+            steps.checks.outcome == 'failure' ||
+            steps.automation.outcome == 'failure'
+          )
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -65,5 +98,11 @@ jobs:
           git push
 
       - name: Mark workflow as failed
-        if: always() && steps.automation.outcome == 'failure'
+        if: >-
+          always() && (
+            steps.dependencies.outcome == 'failure' ||
+            steps.chromium.outcome == 'failure' ||
+            steps.checks.outcome == 'failure' ||
+            steps.automation.outcome == 'failure'
+          )
         run: exit 1
